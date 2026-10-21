@@ -89,7 +89,7 @@ node server.mjs               # → http://localhost:5177 (the live preview work
 | Path | Description |
 |---|---|
 | `server.mjs` | Zero-dependency Node.js HTTP server; serves static files, upload API, and reverse proxies the worker |
-| `public/` | Frontend web application (Three.js stage, MediaPipe vision pipeline, retargeting engine) |
+| `public/` | Frontend web application (Three.js stage, 3D retargeting engine, minimal editor UI) |
 | `hq/worker.py` | FastAPI worker providing GVHMR SMPL 3D pose extraction |
 | `hq/hands.py` | Full-resolution finger and hand tracking (WiLoR / MediaPipe) |
 | `tools/colab_runner.py` | Automated Colab launcher with zero-config Cloudflare Tunneling |
