@@ -1,10 +1,14 @@
 // Frame-exact recordings of Prompt2Rig takes, rendered in an off-screen (headless) Chrome.
 // Doesn't touch your screen: each frame is seeked, posed with the GVHMR motion and screenshotted.
 //
-//   node tools/capture.mjs --prompts tools/prompts.txt [--character michelle] [--out captures]
+//   node tools/capture.mjs --clip <video url>[,<more urls|url|prompt>] [--character michelle] [--out captures]
+//
+// --clip entries are URLs, or `url|label` to name each clip separately. --passes N plays each
+// clip N times; --zoom a-b zooms onto --zoom-bone (default RightHand) between a and b seconds of
+// the output, with --ramp seconds of ease in/out.
 //
 // Needs the web server (node server.mjs) and the HQ worker running. Writes one 2560×1440 30fps
-// MP4 per prompt: <out>/<nn>_<prompt>.mp4, plus <out>/takes.json.
+// MP4 per clip: <out>/<nn>_<label>.mp4, plus <out>/takes.json.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,20 +23,19 @@ const W = Number(args.width || 2560), H = Number(args.height || 1440), FPS = 30;
 const OUT = path.resolve(args.out || 'captures');
 const URL = args.url || 'http://localhost:5177';
 const CHROME = args.chrome || 'C:/Program Files/Google/Chrome/Application/chrome.exe';
-// Lines may end in "| <seconds>" to set that clip's duration (FLUX 3 Max: 5–20s).
-// --clip <video url> [--prompt "..."] re-captures an existing clip instead of generating from --prompts.
-// --passes N plays it N times; --zoom a-b zooms onto --zoom-bone (default RightHand) between a and b
-// seconds of the output, with --ramp seconds of ease in/out.
-const prompts = args.clip ? [{ prompt: args.prompt || 'existing clip', duration: 5, url: args.clip }] : fs.readFileSync(args.prompts || 'tools/prompts.txt', 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
-  .map((l) => { const [p, d] = l.split('|').map((x) => x.trim()); return { prompt: p, duration: d ? Number(d) : Number(args.duration || 5) }; });
+const clips = String(args.clip || '').split(',').map((s) => s.trim()).filter(Boolean);
+if (!clips.length) {
+  console.error('usage: node tools/capture.mjs --clip <video url>[,<url|label>] [--prompt "..."] [--passes N] [--out captures]');
+  process.exit(1);
+}
+const prompts = clips.map((c, i) => {
+  const at = c.indexOf('|');
+  const url = (at >= 0 ? c.slice(0, at) : c).trim();
+  return { prompt: (at >= 0 ? c.slice(at + 1).trim() : args.prompt) || (clips.length > 1 ? `clip ${i + 1}` : 'existing clip'), url };
+});
 
-// App settings for the recording: FLUX 3 Max, portrait, GVHMR only (hold until HQ), static camera.
-const settings = {
-  character: args.character || 'michelle', videoModel: args.model || 'flux3', orientation: 'portrait',
-  stream: false, chain: false, swap: false, cinematic: false, hq: true, waitHq: true, showSkel: true,
-  source: 'performer', duration: 5, resolution: '480P',
-  ...(args.performer ? { performerUrls: { portrait: args.performer } } : {}),
-};
+// App settings for the recording: GVHMR only, static camera.
+const settings = { character: args.character || 'michelle', swap: false, cinematic: false, hq: true, showSkel: true };
 
 const log = (...m) => console.log(new Date().toLocaleTimeString(), ...m);
 const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 48);
@@ -59,19 +62,16 @@ try {
       pills: [...document.querySelectorAll('.pill')].slice(0, 3).map((x) => x.className + ':' + x.textContent) })).catch(() => '?'));
     throw e;
   });
-  log(`app ready (${settings.character}, ${settings.videoModel}); ${prompts.length} prompts`);
+  log(`app ready (${settings.character}); ${prompts.length} clips`);
 
   const passes = Number(args.passes || 1);
   const [z0, z1] = args.zoom ? String(args.zoom).split('-').map(Number) : [Infinity, -Infinity];
   const ramp = Number(args.ramp || 1.1);
   const zoomAt = (t) => (t < z0 || t > z1 ? 0 : Math.min(1, (t - z0) / ramp, (z1 - t) / ramp));
-  for (const [i, { prompt, duration: seconds, url: clipUrl }] of prompts.entries()) {
+  for (const [i, { prompt, url }] of prompts.entries()) {
     const name = `${String(i + 1).padStart(2, '0')}_${slug(prompt)}`;
-    log(`#${i + 1} generating (${seconds}s): ${prompt}`);
-    await page.evaluate((p) => { document.querySelector('#prompt').value = p; }, prompt);
-    const id = clipUrl
-      ? await page.evaluate((u, p) => window.p2r.playUrl(u, true, undefined, p).id, clipUrl, prompt)
-      : await page.evaluate((p, d) => window.p2r.submit(p, { duration: d }), prompt, seconds);
+    log(`#${i + 1} loading clip ${url}`);
+    const id = await page.evaluate((u, p) => window.p2r.playUrl(u, true, undefined, p).id, url, prompt);
     const take = await page.waitForFunction((tid) => {
       const t = window.p2r.take(tid);
       return t && (t.status === 'error' || t.hq === 'error' || t.hq === 'done') && t;
@@ -79,8 +79,6 @@ try {
     if (take.hq !== 'done') { log(`#${i + 1} failed (${take.status}/${take.hq}) — skipped`); continue; }
 
     const { duration, frames } = await page.evaluate((tid) => window.p2r.beginCapture(tid), id);
-    // Highlight the prompt in the textarea, as when typing it.
-    await page.evaluate(() => { const ta = document.querySelector('#prompt'); ta.focus(); ta.select(); });
     const file = path.join(OUT, `${name}.mp4`);
     const ff = spawn('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'image2pipe', '-c:v', 'mjpeg', '-r', String(FPS), '-i', '-',
       '-c:v', 'libx264', '-preset', 'medium', '-crf', '16', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', file], { stdio: ['pipe', 'inherit', 'inherit'] });

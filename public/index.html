@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>prompt2rig · universal-modder</title>
+<title>Mocaply · AI Motion Capture & Rigging</title>
 <link rel="icon" type="image/svg+xml" href="./brand/mark.svg" />
 <script type="importmap">
 {
@@ -39,7 +39,6 @@
   ::-webkit-scrollbar-thumb { background: var(--coal3); border: 2px solid var(--coal); }
   ::-webkit-scrollbar-thumb:hover { background: var(--ash2); }
   ::selection { background: var(--missing); color: var(--void); }
-  #prompt::selection { background: var(--missing-dim); color: var(--bone); }
   html, body { margin: 0; height: 100%; background: var(--void); color: var(--bone); font: 13px/1.45 var(--sans); }
   button, input, select, textarea { font: inherit; color: inherit; }
   a { color: inherit; }
@@ -60,16 +59,11 @@
   .pill::before { content: ""; width: 5px; height: 5px; background: currentColor; }
   .pill.ok { color: var(--gold); background: #2a2418; } .pill.bad { color: var(--err); } .pill.busy { color: var(--missing); background: #2b1a29; }
 
-  textarea { width: 100%; min-height: 76px; resize: vertical; background: var(--void); border: 1px solid var(--rule); padding: 10px; outline: none; font: 13px/1.45 var(--sans); }
-  textarea:focus { border-color: var(--missing); }
   .go { width: 100%; padding: 11px; border: 0; background: var(--bone); color: var(--void); font: 15px/1 var(--pixel); letter-spacing: .5px; cursor: pointer; clip-path: var(--notch); display: flex; justify-content: center; gap: 10px; align-items: baseline; }
   .go small { font: 10.5px var(--mono); opacity: .65; letter-spacing: 0; }
   .go:hover { background: var(--missing); }
   .go:active { transform: translateY(1px); }
   .go:disabled { opacity: .5; cursor: default; }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { font-size: 11.5px; line-height: 1.3; padding: 5px 9px; background: var(--coal2); color: var(--bone2); cursor: pointer; clip-path: var(--notch); }
-  .chip:hover { background: var(--coal3); color: var(--bone); }
 
   .section { display: flex; flex-direction: column; gap: 9px; }
   .section > label.title { font: 10.5px/1 var(--mono); letter-spacing: .6px; color: var(--ash); display: flex; align-items: center; gap: 8px; }
@@ -100,9 +94,6 @@
   input[type=range]::-moz-range-track { height: 3px; background: var(--coal3); }
   input[type=range]::-moz-range-thumb { width: 10px; height: 10px; background: var(--bone); border: 0; border-radius: 0; }
 
-  .performer { display: flex; gap: 10px; align-items: center; }
-  .performer img { width: 120px; aspect-ratio: 16/9; object-fit: cover; border: 1px solid var(--rule); background: var(--coal2); }
-  .performer img.portrait { width: 62px; aspect-ratio: 9/16; }
   .note { color: var(--ash); font-size: 11.5px; line-height: 1.35; }
   .btn { padding: 6px 10px; border: 0; background: var(--coal2); cursor: pointer; clip-path: var(--notch); font-size: 12px; }
   .btn:hover { background: var(--coal3); }
@@ -153,10 +144,10 @@
 <div class="app">
   <aside>
     <div class="brand">
-      <img src="./brand/mark.svg" alt="universal-modder mark" />
+      <img src="./brand/mark.svg" alt="Mocaply mark" />
       <div>
-        <h1>prompt2rig<span class="dot">.</span></h1>
-        <a class="by" href="https://universalmodder.com" target="_blank" rel="noopener">by universal-modder</a>
+        <h1>Mocaply<span class="dot">.</span></h1>
+        <a class="by" href="https://github.com/liladhiee-web/Mocaply" target="_blank" rel="noopener">by liladhiee-web</a>
       </div>
     </div>
     <div class="pills">
@@ -166,40 +157,13 @@
     </div>
 
     <div class="section">
-      <textarea id="prompt" placeholder="describe a motion… e.g. does an energetic hip hop dance">does an energetic hip hop dance with big arm movements</textarea>
-      <button class="go" id="go"><span>generate<span style="color:var(--missing)">.</span></span><small>ctrl+enter</small></button>
-      <div class="chips" id="chips"></div>
-    </div>
-
-    <div class="section">
-      <label class="title">performer · first frame</label>
-      <div class="performer">
-        <img id="performer-img" alt="" />
-        <div style="display:flex;flex-direction:column;gap:7px">
-          <button class="btn" id="performer-new">new performer</button>
-          <span class="note">one flux image starts every clip, so framing and body stay the same</span>
-        </div>
-      </div>
-    </div>
-
-    <div class="section">
-      <label class="title">generation</label>
-      <label class="check"><input type="checkbox" id="stream" /><span><b>stream mode</b><small>one continuous performance: each clip picks up from the last, plays once its hq motion is in, and idles between prompts</small></span></label>
-      <div class="row"><span>video model</span>
-        <select id="videoModel"><option value="h3">h3 max turbo · fastest</option><option value="flux3">flux 3 max · best</option></select></div>
-      <div class="row"><span>orientation</span>
-        <select id="orientation"><option value="portrait">portrait 9:16</option><option value="landscape">landscape 16:9</option></select></div>
-      <div class="row"><span>source</span>
-        <select id="source"><option value="performer">performer → video</option><option value="t2v">text → video</option></select></div>
-      <label class="check"><input type="checkbox" id="chain" /><span>continue from last frame<small>each clip starts where the previous one ended</small></span></label>
-      <div class="row"><span>duration <b id="duration-v"></b></span><input type="range" id="duration" min="2" max="20" step="1" /></div>
-      <div class="row"><span>resolution</span><select id="resolution"><option>480P</option><option>768P</option><option>1080P</option></select></div>
+      <button class="go" id="btn-vid"><span>load clip<span style="color:var(--missing)">.</span></span><small>mp4 · webm · mov</small></button>
+      <span class="note">any local clip works — from a previous run, another generator, or your camera. it plays the live pose preview right away, then the hq pass lifts it onto the rig.</span>
     </div>
 
     <div class="section">
       <label class="title">motion</label>
       <label class="check"><input type="checkbox" id="hq" /><span>hq pass · gvhmr on your gpu<small>instant mediapipe preview, then the gvhmr motion swaps in</small></span></label>
-      <label class="check"><input type="checkbox" id="waitHq" /><span>hold playback until hq is ready<small>cleanest look, a few seconds before each clip</small></span></label>
       <label class="check"><input type="checkbox" id="hands" /><span>track fingers<small>wilor on the source clip → wrist and finger poses. untracked hands rest in a natural curl</small></span></label>
       <label class="check"><input type="checkbox" id="rootMotion" /><span>root motion</span></label>
       <div class="row"><span>live pose model</span><select id="poseModel"><option value="heavy">heavy</option><option value="full">full</option></select></div>
@@ -215,10 +179,9 @@
       <label class="check"><input type="checkbox" id="cinematic" /><span>cinematic camera<small>slow arc and push-in. drag to take over</small></span></label>
       <div class="row">
         <button class="btn" id="btn-char">load mixamo file…</button>
-        <button class="btn" id="btn-vid">use a video file…</button>
       </div>
       <input type="file" id="file-char" accept=".glb,.gltf,.fbx" />
-      <input type="file" id="file-vid" accept="video/*" />
+      <input type="file" id="file-vid" accept="video/*,.mp4,.webm,.mov,.mkv" />
     </div>
 
     <div class="section">
@@ -230,14 +193,14 @@
 
   <main>
     <div id="stage"></div>
-    <a class="um-discord" href="https://discord.gg/universal-modder" target="_blank" rel="noopener noreferrer" aria-label="join the universal-modder discord (opens in a new tab)">
+    <a class="um-discord" href="https://github.com/liladhiee-web/Mocaply" target="_blank" rel="noopener noreferrer" aria-label="Mocaply on GitHub">
       <span class="um-discord-panel">
-        <img src="./brand/logo.svg" alt="universal-modder" />
-        <span class="um-discord-label">join our discord <span class="um-discord-arrow">↗</span></span>
+        <span style="font-family:var(--pixel);font-size:12px;letter-spacing:1px;color:var(--bone);font-weight:bold;">MOCAPLY</span>
+        <span class="um-discord-label">by liladhiee-web <span class="um-discord-arrow">↗</span></span>
       </span>
     </a>
     <div class="vidwrap" id="vidwrap">
-      <div class="empty" id="vid-empty">generated video appears here</div>
+      <div class="empty" id="vid-empty">loaded clip appears here</div>
       <video id="video" muted playsinline crossorigin="anonymous" style="display:none"></video>
       <canvas id="overlay"></canvas>
     </div>

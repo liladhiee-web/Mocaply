@@ -25,7 +25,7 @@ try {
   const page = await browser.newPage();
   page.on('pageerror', (e) => console.log('page error:', e.message));
   await page.evaluateOnNewDocument((s) => localStorage.setItem('p2r', JSON.stringify(s)),
-    { character: args.character || 'xbot', hq: true, waitHq: true, swap: false, cinematic: false, stream: false, hands: hands !== 'off' });
+    { character: args.character || 'xbot', hq: true, swap: false, cinematic: false, hands: hands !== 'off' });
   await page.goto('http://localhost:5177', { waitUntil: 'networkidle2' });
   await page.waitForFunction(() => window.p2r?.rig && document.querySelector('#pill-hq').classList.contains('ok'), { timeout: 120000 });
   const id = await page.evaluate((u, h) => window.p2r.playUrl(u, true, h).id, args.url, hands);

@@ -1,4 +1,4 @@
-// Prompt2Rig — prompt → H3 Max Turbo video → live pose (MediaPipe) → Mixamo rig,
+// Prompt2Rig — load any clip → live pose (MediaPipe) → Mixamo rig,
 // with an optional GVHMR "HQ" pass on the local GPU that swaps in when ready.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -16,50 +16,13 @@ const CHARACTERS = {
   michelle: { name: 'Michelle', url: THREE_MODELS + 'Michelle.glb' },
   soldier: { name: 'Soldier', url: THREE_MODELS + 'Soldier.glb' },
 };
-const VIDEO_MODEL_LABEL = { h3: 'h3 max turbo', flux3: 'flux 3 max' };
 const MP_WASM = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
 const MP_MODEL = (v) => `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${v}/float16/latest/pose_landmarker_${v}.task`;
 
-const PERFORMER_PROMPT =
-  'Full-body photograph of one young adult standing in a relaxed neutral pose facing the camera, arms relaxed at the sides, ' +
-  'wearing a fitted plain light-grey t-shirt, black slim pants and white sneakers. The whole body is visible from head to feet ' +
-  'with empty space above the head and below the feet, the person is centered. Plain seamless ' +
-  'light-grey studio backdrop and floor, flat even soft lighting, sharp focus, 35mm photo.';
-
-// Presets chosen to retarget cleanly: facing the camera, limbs clearly separated from the body.
-// Avoid flips, spins, floor work and arms crossing/hiding behind the torso — pose estimators
-// lose track of which limb is which, and the error shows on the rig.
-const PRESETS = [
-  'does an energetic hip hop dance with wide, open arm movements',
-  'throws boxing jabs and hooks toward the camera',
-  'does jumping jacks',
-  'mimes a full golf swing',
-  'shoots an imaginary basketball jump shot',
-  'celebrates a victory, jumping and pumping both fists in the air',
-  'does a stiff zombie walk in place with arms stretched forward',
-  'does a karate kata with straight punches and front kicks',
-  'waves hello with both arms, then takes a bow',
-  'does a big superhero landing pose, then stands up proudly',
-];
-
-const IDLE_PROMPT = 'stands in place in a relaxed idle pose, breathing and gently shifting weight from foot to foot';
-const MAX_IDLE_STREAK = 3;
-// Stream mode = continue-from-last-frame + play only once HQ is ready + idle between prompts.
-const chainOn = () => settings.chain || settings.stream;
-const waitOn = () => settings.hq && hqOnline && (settings.waitHq || settings.stream);
-
-// Shared staging that keeps clips easy to read for pose estimation.
-const STAGING = 'They stay roughly in place facing the camera, with both arms clearly visible and held away from the torso, no turning around, no flips. ' +
-  'Their entire body, including both feet, stays visible in frame the whole time. Static locked-off camera, no camera movement, no zoom, no cuts.';
-const videoPrompt = (action, fromImage) => fromImage
-  ? `The person ${action}. ${STAGING} Plain studio background.`
-  : `Wide full-body shot of one person wearing a plain grey t-shirt and dark pants in an empty light-grey studio. The person ${action}. ${STAGING}`;
-
 // ---- settings ------------------------------------------------------------------
 const DEFAULTS = {
-  stream: false, source: 'performer', chain: false, duration: 5, resolution: '480P', hq: true, waitHq: false,
-  rootMotion: true, poseModel: 'heavy', smoothing: 0.5, showSkel: true, orientation: 'portrait', performerUrls: {},
-  character: 'xbot', videoModel: 'h3', swap: false, cinematic: false, hands: true,
+  hq: true, rootMotion: true, poseModel: 'heavy', smoothing: 0.5, showSkel: true,
+  character: 'xbot', swap: false, cinematic: false, hands: true,
 };
 const settings = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('p2r') || '{}') }; } catch { return { ...DEFAULTS }; } })();
 const save = () => { try { localStorage.setItem('p2r', JSON.stringify(settings)); } catch {} };
@@ -197,10 +160,10 @@ const takes = [];
 class Take {
   constructor(prompt) {
     this.id = ++takeSeq; this.prompt = prompt;
-    this.videoUrl = null; this.status = 'generating';
+    this.videoUrl = null; this.status = 'ready';
     this.live = null; this.liveDone = false;
     this.hq = null; this.hqRaw = null; this.hqStatus = 'off'; this.hqAt = 0;
-    this.rootOffset = null; this.timings = {};
+    this.timings = {};
     this.ready = new Promise((r) => (this._resolveReady = r));
   }
   get best() { return this.hq || (this.liveDone ? this.live : null); }
@@ -211,14 +174,10 @@ function renderTakes() {
   for (const t of [...takes].reverse()) {
     const card = document.createElement('div');
     card.className = 'take' + (t === current ? ' playing' : '');
-    const gen = t.status === 'generating' ? '<span class="pill busy">generating</span>'
-      : t.status === 'error' ? '<span class="pill bad">failed</span>'
-      : t.status === 'skipped' ? '<span class="pill">skipped</span>'
-      : t.timings.gen ? `<span class="pill">${t.timings.gen.toFixed(1)}s gen</span>` : '';
     const live = t.liveDone ? '<span class="pill">live</span>' : '';
     const hq = { running: '<span class="pill busy">hq</span>', done: `<span class="pill ok">hq ${t.timings.hq?.toFixed(1)}s</span>`, error: '<span class="pill bad">hq failed</span>' }[t.hqStatus] || '';
-    card.innerHTML = `<div class="p" title="${escapeHtml(t.prompt)}">#${t.id} · ${t.auto ? '<i style="color:var(--dim)">idle</i> · ' : ''}${escapeHtml(t.prompt)}</div>
-      <div class="meta">${gen}${live}${hq}</div>
+    card.innerHTML = `<div class="p" title="${escapeHtml(t.prompt)}">#${t.id} · ${escapeHtml(t.prompt)}</div>
+      <div class="meta">${t.status === 'error' ? '<span class="pill bad">failed</span>' : ''}${live}${hq}</div>
       <div class="actions"><button class="btn" data-a="play" ${t.videoUrl ? '' : 'disabled'}>▶ play</button>
       <button class="btn" data-a="glb" ${t.best ? '' : 'disabled'}>↓ glb</button></div>`;
     card.querySelector('[data-a=play]').onclick = () => playTake(t);
@@ -227,108 +186,6 @@ function renderTakes() {
   }
 }
 const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
-// ---- generation ------------------------------------------------------------------------
-let genChain = Promise.resolve();
-let lastGenerated = null;
-
-let idleStreak = 0;
-function submitPrompt(prompt, { auto = false } = {}) {
-  prompt = prompt.trim();
-  if (!prompt) return;
-  if (!auto) {
-    idleStreak = 0;
-    // A real prompt shouldn't wait behind an idle filler that hasn't started playing: drop it,
-    // and chain from the clip before it instead.
-    const idle = lastGenerated;
-    if (settings.stream && idle?.auto && !idle.started && idle !== current && idle.status === 'ready' && !genBusy) {
-      const qi = queue.indexOf(idle); if (qi >= 0) queue.splice(qi, 1);
-      idle.status = 'skipped'; lastGenerated = idle.prevGenerated;
-      log(`#${idle.id} idle filler skipped for your prompt`);
-    }
-  }
-  const take = new Take(prompt);
-  take.auto = auto;
-  takes.push(take); renderTakes();
-  // Serialized: "continue from last frame" needs the previous clip's final frame.
-  genBusy++;
-  genChain = genChain.then(() => generate(take)).catch(() => {}).finally(() => genBusy--);
-}
-let genBusy = 0;
-
-/** Stream mode: keep one clip in the pipeline so the performer never freezes for long. */
-function maybeIdle() {
-  if (!settings.stream || idleStreak >= MAX_IDLE_STREAK) return;
-  const ahead = queue.length + genBusy + takes.filter((t) => t.status === 'ready' && t.hqStatus === 'running' && !t.started).length;
-  if (ahead === 0) { idleStreak++; submitPrompt(IDLE_PROMPT, { auto: true }); }
-}
-
-async function ensurePerformer(force = false) {
-  const o = settings.orientation;
-  if (settings.performerUrls[o] && !force) return settings.performerUrls[o];
-  banner('creating performer…');
-  const t0 = performance.now();
-  const r = await api('/api/image', { prompt: PERFORMER_PROMPT, image_size: o === 'portrait' ? 'portrait_16_9' : 'landscape_16_9' });
-  settings.performerUrls[o] = r.image_url; save();
-  showPerformer();
-  log(`performer image in ${((performance.now() - t0) / 1000).toFixed(1)}s`, 'ok');
-  banner('');
-  return r.image_url;
-}
-
-async function generate(take) {
-  const t0 = performance.now();
-  try {
-    let image_url = null, from = 'text';
-    if (chainOn() && lastGenerated?.videoUrl) {
-      image_url = await (lastGenerated.lastFrame ||= lastFrameDataUrl(lastGenerated.videoUrl)); from = `take #${lastGenerated.id} last frame`;
-    } else if (settings.source === 'performer') {
-      image_url = await ensurePerformer(); from = 'performer';
-    }
-    banner(`generating #${take.id}…`);
-    log(`#${take.id} → ${VIDEO_MODEL_LABEL[settings.videoModel]} (${from}, ${settings.duration}s ${settings.resolution})`);
-    const r = await api('/api/video', {
-      prompt: videoPrompt(take.prompt, !!image_url), image_url,
-      model: settings.videoModel, duration: settings.duration, resolution: settings.resolution, aspect_ratio: settings.orientation === 'portrait' ? '9:16' : '16:9',
-    });
-    take.videoUrl = r.video_url; take.status = 'ready';
-    take.timings.gen = (performance.now() - t0) / 1000;
-    log(`#${take.id} video in ${take.timings.gen.toFixed(1)}s (gpu ${r.timings?.inference?.toFixed(2) ?? '?'}s)`, 'ok');
-    take.prevGenerated = lastGenerated;
-    lastGenerated = take;
-    // Grab the final frame now (in parallel with HQ) so the next chained clip can start immediately.
-    if (chainOn()) take.lastFrame = lastFrameDataUrl(take.videoUrl).catch(() => null);
-    banner('');
-    if (settings.hq && hqOnline) runHQ(take);
-    renderTakes();
-    if (waitOn() && !(settings.stream && held)) {
-      // Normally play only once HQ is ready; if the player starves meanwhile, startStarved()
-      // plays it early with the live preview and HQ cross-fades in when it lands.
-      take.awaitingHq = true;
-      if (!current) banner(`#${take.id}: waiting for hq motion…`);
-      take.hqPromise.finally(() => {
-        banner('');
-        if (take.awaitingHq && take.status !== 'skipped') { take.awaitingHq = false; enqueue(take); }
-      });
-    } else enqueue(take);
-  } catch (e) {
-    take.status = 'error'; renderTakes(); banner('');
-    log(`#${take.id} failed: ${e.message}`, 'err');
-  }
-}
-
-/** Grab a clip's final frame as a JPEG data URI (first frame for the next clip). */
-async function lastFrameDataUrl(url) {
-  const v = document.createElement('video');
-  v.crossOrigin = 'anonymous'; v.muted = true; v.preload = 'auto'; v.src = url;
-  await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error('cannot load video for last frame')); });
-  v.currentTime = Math.max(0, v.duration - 0.05);
-  await new Promise((res) => (v.onseeked = res));
-  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
-  c.getContext('2d').drawImage(v, 0, 0);
-  v.removeAttribute('src'); v.load();
-  return c.toDataURL('image/jpeg', 0.92);
-}
 
 // ---- HQ (GVHMR) --------------------------------------------------------------------------
 let hqOnline = false;
@@ -419,67 +276,53 @@ function setSmoothing(s) {
   worldFilter.beta = hipFilter.beta = THREE.MathUtils.lerp(1.2, 0.15, s);
 }
 
-let held = false; // stream mode: clip ended, nothing ready yet → hold the last pose
 function enqueue(take) {
   queue.push(take);
   if (capturing) return; // the capture script decides what's on screen
-  // Switch right away unless the current clip is still on its first (live) pass,
-  // or we're chaining (then the next clip continues from this one's last frame).
-  if (!current || held || (current.liveDone && !chainOn())) playNext();
+  if (!current || current.liveDone) playNext();
 }
 
-/** Out of HQ-ready clips: start the next generated one now on the live pass instead of freezing. */
-function startStarved() {
-  const next = takes.find((t) => t.awaitingHq && t.status === 'ready' && !t.started);
-  if (!next) return false;
-  next.awaitingHq = false;
-  log(`#${next.id} starting on live preview (hq still running)`);
-  enqueue(next);
-  return true;
+function playNext() {
+  const t = queue.shift();
+  if (t) playTake(t);
 }
-
-function playNext() { const t = queue.shift(); if (t) playTake(t); }
 
 function playTake(take) {
-  if (!take.videoUrl) return;
+  if (!take || !take.videoUrl) return;
   if (current && rig) { switchFrom = rig.snapshot(); switchAt = performance.now(); }
-  held = false; take.started = true;
+  take.started = true;
   if (take.hq) take.hqAt = -1e9; // already HQ: no live→HQ cross-fade
-  const prev = current;
   current = take;
   const qi = queue.indexOf(take); if (qi >= 0) queue.splice(qi, 1);
-  if (!take.rootOffset) {
-    take.rootOffset = new THREE.Vector3();
-    if (chainOn() && prev && rig) {
-      take.rootOffset.set(lastRenderedHips.x - rig.rest.Hips.wp.x, 0, lastRenderedHips.z - rig.rest.Hips.wp.z);
-      take.rootOffset.clampLength(0, 2.5);
-    }
-  }
   if (!take.liveDone) {
-    take.live = new Track(rig.order.length);
+    take.live = rig ? new Track(rig.order.length) : null;
     liveState = { hip0: null, baseY: null, mpp: null, scale: null };
     worldFilter.reset(); hipFilter.reset(); liveSnap = null;
   }
-  $('#vid-empty').style.display = 'none';
+  const vidEmpty = $('#vid-empty');
+  if (vidEmpty) vidEmpty.style.display = 'none';
   video.style.display = 'block';
+  if (take.videoUrl.startsWith('blob:')) {
+    video.removeAttribute('crossorigin');
+  } else {
+    video.crossOrigin = 'anonymous';
+  }
   video.src = take.videoUrl;
   video.onloadedmetadata = () => $('#vidwrap').classList.toggle('portrait', video.videoHeight > video.videoWidth);
   lastDetectT = -1;
   video.play().catch(() => {});
   renderTakes();
-  maybeIdle();
 }
 
 video.addEventListener('ended', () => {
   if (settings.swap && rig) swapCharacter().catch((e) => log('swap failed: ' + e.message, 'err'));
   if (current && !current.liveDone) {
-    current.liveDone = current.live.length > 3;
-    log(`#${current.id} live pass: ${current.live.length} frames`);
+    current.liveDone = current.live && current.live.length > 3;
+    log(`#${current.id} live pass: ${current.live ? current.live.length : 0} frames`);
     renderTakes();
   }
   if (queue.length) playNext();
-  else if (settings.stream) { held = true; if (!startStarved()) maybeIdle(); } // freeze on the last frame
-  else { video.currentTime = 0; video.play().catch(() => {}); }
+  else { video.currentTime = 0; video.play().catch(() => {}); } // loop the clip
 });
 
 // Per decoded video frame: run pose, draw overlay, record the live track.
@@ -502,6 +345,7 @@ function detectIfNewFrame() {
     drawOverlay(res);
     if (!current.liveDone && res.worldLandmarks?.[0]) {
       liveSnap = solveLive(res, mediaTime);
+      current.live ||= new Track(rig.order.length);
       current.live.push(mediaTime, liveSnap); stats.recorded++;
     }
   } catch (e) { console.error(e); }
@@ -577,7 +421,7 @@ function tick() {
     const n = rig.order.length * 4;
     for (const b of [bufA, bufB, bufC]) if (!b.q || b.q.length !== n) b.q = new Float32Array(n);
     const t = video.currentTime;
-    const live = current.liveDone ? current.live.sample(t, bufA) : liveSnap;
+    const live = current.liveDone ? current.live?.sample(t, bufA) : liveSnap;
     const hq = current.hq ? current.hq.sample(t, bufB) : null;
     let snap = hq || live, src = hq ? 'hq · gvhmr' : live ? 'live · mediapipe' : '—';
     if (hq && live) {
@@ -591,12 +435,10 @@ function tick() {
     }
     if (snap) {
       rig.applySnapshot(snap);
-      if (current.rootOffset?.lengthSq()) { const h = rig.hipsWorld().add(current.rootOffset); rig.setHipsWorld(h); }
       rig.hipsWorld(lastRenderedHips);
     }
     const hud = $('#hud-src'); hud.textContent = src; hud.className = 'tag ' + (hq ? 'src-hq' : 'src-live');
-    const buf = settings.stream ? `  ·  ready ${queue.length}  gen ${genBusy}  hq ${takes.filter((x) => x.hqStatus === 'running').length}${held ? '  ·  HOLD' : ''}` : '';
-    $('#hud-time').textContent = `#${current.id}  ${t.toFixed(2)}s${buf}`;
+    $('#hud-time').textContent = `#${current.id}  ${t.toFixed(2)}s`;
   }
   if (rig) {
     const shown = onStage ? cast[onStage].rig : rig;
@@ -616,50 +458,25 @@ async function exportTake(take) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
   a.download = name + '.glb'; a.click();
-  // Also keep a copy in ./takes (with the source clip URL) for tools/render_blender.py.
-  const q = new URLSearchParams({ name, prompt: take.prompt, ...(take.videoUrl?.startsWith('http') ? { source: take.videoUrl } : {}) });
+  // Also keep a copy in ./takes (with the source clip) for tools/render_blender.py: remote URLs go
+  // straight to ffmpeg, uploaded clips resolve to their path in public/uploads.
+  const source = take.videoUrl?.startsWith('http') ? take.videoUrl
+    : take.videoUrl?.startsWith('/uploads/') ? 'public' + take.videoUrl : null;
+  const q = new URLSearchParams({ name, prompt: take.prompt, ...(source ? { source } : {}) });
   fetch('/api/takes?' + q, { method: 'POST', body: glb }).then((r) => r.ok && log(`saved takes/${name}.glb`, 'ok')).catch(() => {});
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   log(`exported ${name}.glb`, 'ok');
 }
 
 // ---- UI wiring --------------------------------------------------------------------------------
-bindSetting('stream', 'checked', (on) => {
-  for (const id of ['chain', 'waitHq']) { const el = $('#' + id); el.disabled = on; el.closest('label').style.opacity = on ? 0.5 : 1; }
-});
-bindSetting('source'); bindSetting('chain', 'checked'); bindSetting('resolution');
-bindSetting('videoModel', 'value', (m) => {
-  const d = $('#duration'); d.min = m === 'flux3' ? 5 : 2;  // FLUX 3 Max: 5–20s
-  if (settings.duration < d.min) { settings.duration = Number(d.min); d.value = d.min; $('#duration-v').textContent = d.min + 's'; save(); }
-});
 bindSetting('swap', 'checked', (on) => { if (!on && model) showOnStage(null); });
 bindSetting('cinematic', 'checked', (on) => stage.setCinematic(on));
 bindSetting('character', 'value', (c) => { if (rig && CHARACTERS[c]) loadCharacter(CHARACTERS[c].url, CHARACTERS[c].name).catch((e) => log('character failed: ' + e.message, 'err')); });
-bindSetting('duration', 'value', (v) => ($('#duration-v').textContent = v + 's'));
 bindSetting('hq', 'checked');
-bindSetting('hands', 'checked', () => { if (rig) for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); }); bindSetting('waitHq', 'checked'); bindSetting('rootMotion', 'checked');
+bindSetting('hands', 'checked', () => { if (rig) for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); }); bindSetting('rootMotion', 'checked');
 bindSetting('showSkel', 'checked');
 bindSetting('smoothing', 'value', setSmoothing);
 bindSetting('poseModel', 'value', (v) => { if (vision) initPose(v); });
-
-const chips = $('#chips');
-for (const p of PRESETS) {
-  const c = document.createElement('span'); c.className = 'chip'; c.textContent = p;
-  c.onclick = () => submitPrompt(p);
-  chips.appendChild(c);
-}
-$('#go').onclick = () => submitPrompt($('#prompt').value);
-$('#prompt').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); submitPrompt($('#prompt').value); } });
-$('#performer-new').onclick = () => ensurePerformer(true).catch((e) => { banner(''); log('performer failed: ' + e.message, 'err'); });
-function showPerformer() {
-  const img = $('#performer-img'), url = settings.performerUrls[settings.orientation];
-  img.classList.toggle('portrait', settings.orientation === 'portrait');
-  if (url) img.src = url; else img.removeAttribute('src');
-  // Before any clip has loaded, shape the empty video panel like the clips that will come.
-  if (!video.videoWidth) $('#vidwrap').classList.toggle('portrait', settings.orientation === 'portrait');
-}
-if (settings.performerUrl) { settings.performerUrls.landscape ||= settings.performerUrl; delete settings.performerUrl; save(); }
-bindSetting('orientation', 'value', showPerformer);
 
 $('#btn-char').onclick = () => $('#file-char').click();
 $('#file-char').onchange = (e) => {
@@ -667,13 +484,51 @@ $('#file-char').onchange = (e) => {
   const url = URL.createObjectURL(f);
   loadCharacter(url, f.name).catch((err) => { log('character failed: ' + err.message, 'err'); pill('rig', 'character failed', 'bad'); });
 };
+async function handleVideoFile(f) {
+  banner(`loading ${f.name}…`);
+  // Send the file to the server so the hq worker can fetch it; fall back to a local
+  // blob copy (live pass only, no hq) if the upload fails.
+  const take = new Take(`(file) ${f.name}`);
+  let uploaded = false;
+  try {
+    const res = await fetch(`/api/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', body: f });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || `upload → ${res.status}`);
+    take.videoUrl = j.url; take.status = 'ready';
+    uploaded = true;
+    log(`#${take.id} clip loaded (${(j.bytes / 1e6).toFixed(1)} MB) — live pass now${hqOnline ? ', hq pass running' : ''}`);
+  } catch (err) {
+    take.videoUrl = URL.createObjectURL(f); take.status = 'ready';
+    log(`upload failed (${err.message}) — playing the local copy; no hq pass for it`, 'err');
+  }
+  takes.push(take); renderTakes();
+  if (uploaded && settings.hq && hqOnline) runHQ(take);
+  playTake(take);
+  banner('');
+}
+
 $('#btn-vid').onclick = () => $('#file-vid').click();
 $('#file-vid').onchange = (e) => {
-  const f = e.target.files[0]; if (!f) return;
-  const take = new Take(`(file) ${f.name}`);
-  take.videoUrl = URL.createObjectURL(f); take.status = 'ready'; take.timings.gen = 0;
-  takes.push(take); renderTakes(); enqueue(take);
+  const f = e.target.files[0]; e.target.value = ''; if (!f) return;
+  handleVideoFile(f);
 };
+
+// Drag and drop video or 3D files directly onto the window
+window.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+});
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const f = e.dataTransfer?.files?.[0];
+  if (!f) return;
+  if (/\.(mp4|webm|mov)$/i.test(f.name) || f.type.startsWith('video/')) {
+    handleVideoFile(f);
+  } else if (/\.(glb|gltf|fbx)$/i.test(f.name)) {
+    const url = URL.createObjectURL(f);
+    loadCharacter(url, f.name).catch((err) => { log('character failed: ' + err.message, 'err'); pill('rig', 'character failed', 'bad'); });
+  }
+});
 
 // ---- capture zoom: glide the 3D camera onto a hand and zoom the video panel onto the same hand ----
 // k ∈ [0,1] is the zoom amount (the capture script ramps it linearly in time); t is the output time.
@@ -701,7 +556,7 @@ function applyCaptureZoom(k, bone, t = 0) {
   zoomTgt = zoomTgt ? zoomTgt.lerp(want, 0.3) : want.clone();
   const tgt = zoomBase.tgt.clone().lerp(zoomTgt, e);
   // Direction arcs from the wide shot's to a 3/4 close-up angle, plus a slow drift while held.
-  // Nearly straight-on, like the performer's camera, so the close-up reads like the video panel.
+  // Nearly straight-on, like the clip's own camera, so the close-up reads like the video panel.
   const closeDir = new THREE.Vector3(bone.startsWith('Right') ? 0.06 : -0.06, 0.04, 1).normalize();
   const qArc = new THREE.Quaternion().setFromUnitVectors(zoomBase.dir, closeDir);
   const dir = zoomBase.dir.clone().applyQuaternion(new THREE.Quaternion().slerp(qArc, e));
@@ -710,7 +565,7 @@ function applyCaptureZoom(k, bone, t = 0) {
   stage.setFocusLock(tgt);
   stage.camera.position.copy(tgt).addScaledVector(dir, dist);
   stage.update(null);
-  // Video panel: same easing, zooming on the performer's matching hand (pose landmarks right 16/18/20, left 15/17/19).
+  // Video panel: same easing, zooming on the person's matching hand (pose landmarks right 16/18/20, left 15/17/19).
   const ids = bone.startsWith('Right') ? [16, 18, 20] : [15, 17, 19];
   if (lastPose2d) {
     // Wrist + knuckle landmarks, nudged past the knuckles toward the fingertips.
@@ -737,11 +592,7 @@ window.p2r = {
     stage.camera.position.copy(p).add(new THREE.Vector3(...dir).normalize().multiplyScalar(d));
     stage.setFocusLock?.(p);
   },
-  // ---- frame-exact capture: used by tools/capture.mjs ----
-  submit(prompt, { duration } = {}) {
-    if (duration) { settings.duration = duration; $('#duration').value = duration; $('#duration-v').textContent = duration + 's'; }
-    submitPrompt(prompt); return takes[takes.length - 1].id;
-  },
+  // ---- frame-exact capture: used by tools/capture.mjs (clips only) ----
   take(id) { const t = takes.find((x) => x.id === id); return t && { id: t.id, status: t.status, hq: t.hqStatus, url: t.videoUrl, duration: t.hq?.duration ?? null }; },
   async beginCapture(id) {
     const t = takes.find((x) => x.id === id);
@@ -775,4 +626,4 @@ const startChar = CHARACTERS[settings.character] || CHARACTERS.xbot;
 loadCharacter(startChar.url, startChar.name).catch((e) => { log('character failed: ' + e.message, 'err'); pill('rig', 'character failed', 'bad'); });
 initPose(settings.poseModel).catch((e) => { log('pose model failed: ' + e.message, 'err'); pill('pose', 'pose failed', 'bad'); });
 checkHQ(); setInterval(checkHQ, 10000);
-log('ready. type a motion and hit generate');
+log('ready. load a clip below to begin');

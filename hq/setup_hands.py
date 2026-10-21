@@ -60,9 +60,16 @@ def convert_mano(zip_path: Path) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print(__doc__)
-        return 1
+    (HQ / "weights").mkdir(parents=True, exist_ok=True)
+    if len(sys.argv) < 2 or sys.argv[1] in ("--fallback", "--mediapipe", "--help", "-h"):
+        print("MediaPipe Hands fallback:")
+        fetch(MP_TASK, HQ / "weights" / "hand_landmarker.task")
+        print("done — MediaPipe finger tracking is ready.")
+        if len(sys.argv) < 2 or sys.argv[1] not in ("--fallback", "--mediapipe"):
+            print("Note: To enable WiLoR (anatomical MANO hands), supply mano_v1_2.zip:")
+            print("  python hq/setup_hands.py path/to/mano_v1_2.zip")
+        return 0
+
     WILOR.mkdir(parents=True, exist_ok=True)
     print("MANO:")
     convert_mano(Path(sys.argv[1]))

@@ -1,9 +1,10 @@
 {
-  "name": "prompt2rig",
-  "version": "0.1.0",
+  "name": "mocaply",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Prompt → fast video model (H3 Max Turbo / FLUX 3 Max on fal) → GVHMR motion → live retargeting onto Mixamo characters",
+  "description": "Mocaply — load any clip, lift 3D motion with AI (MediaPipe & GVHMR), and retarget onto 3D rigs in real time",
+  "author": "liladhiee-web",
   "license": "Apache-2.0",
   "scripts": {
     "start": "node server.mjs"
