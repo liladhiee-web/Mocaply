@@ -175,7 +175,7 @@ function renderTakes() {
     const card = document.createElement('div');
     card.className = 'take' + (t === current ? ' playing' : '');
     const live = t.liveDone ? '<span class="pill">live</span>' : '';
-    const hq = { running: '<span class="pill busy">hq</span>', done: `<span class="pill ok">hq ${t.timings.hq?.toFixed(1)}s</span>`, error: '<span class="pill bad">hq failed</span>' }[t.hqStatus] || '';
+    const hq = { running: '<span class="pill busy"><span class="spin"></span> lifting hq…</span>', done: `<span class="pill ok">hq ${t.timings.hq?.toFixed(1)}s</span>`, error: '<span class="pill bad">hq failed</span>' }[t.hqStatus] || '';
     card.innerHTML = `<div class="p" title="${escapeHtml(t.prompt)}">#${t.id} · ${escapeHtml(t.prompt)}</div>
       <div class="meta">${t.status === 'error' ? '<span class="pill bad">failed</span>' : ''}${live}${hq}</div>
       <div class="actions"><button class="btn" data-a="play" ${t.videoUrl ? '' : 'disabled'}>▶ play</button>
@@ -190,21 +190,44 @@ const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt
 // ---- HQ (GVHMR) --------------------------------------------------------------------------
 let hqOnline = false;
 async function checkHQ() {
-  try { const r = await api('/api/hq/health'); hqOnline = !!r.ok; pill('hq', r.ok ? `hq · ${(r.device || 'ready').replace(/^NVIDIA GeForce /, '').toLowerCase()}` : 'hq · ' + (r.error || 'not ready'), r.ok ? 'ok' : 'bad'); }
-  catch { hqOnline = false; pill('hq', 'hq worker offline', 'bad'); }
+  try {
+    const r = await api('/api/hq/health');
+    hqOnline = !!r.ok;
+    const isBusy = takes.some((t) => t.hqStatus === 'running');
+    if (!isBusy) {
+      pill('hq', r.ok ? `hq · ${(r.device || 'ready').replace(/^NVIDIA GeForce /, '').toLowerCase()}` : 'hq · ' + (r.error || 'not ready'), r.ok ? 'ok' : 'bad');
+    }
+  } catch {
+    hqOnline = false;
+    pill('hq', 'hq worker offline', 'bad');
+  }
 }
 
 function runHQ(take) {
   const t0 = performance.now();
-  take.hqStatus = 'running'; renderTakes();
+  take.hqT0 = t0;
+  take.hqStatus = 'running';
+  pill('hq', 'lifting hq motion…', 'busy');
+  renderTakes();
   take.hqPromise = api('/api/hq', { video_url: take.videoUrl, ...(take.handsMethod ? { hands: take.handsMethod } : {}) })
     .then((r) => {
       take.hqRaw = r; take.hq = bakeSmpl(r); take.hqAt = performance.now();
       take.hqStatus = 'done'; take.timings.hq = (performance.now() - t0) / 1000;
       log(`#${take.id} hq motion in ${take.timings.hq.toFixed(1)}s (${r.n} frames, worker ${r.elapsed?.toFixed(1)}s)`, 'hq');
+      pill('hq', `hq · ${take.timings.hq.toFixed(1)}s ready`, 'ok');
+      banner(`✓ High-Quality GVHMR motion ready (${take.timings.hq.toFixed(1)}s)! Applied to rig.`);
+      setTimeout(() => banner(''), 4500);
     })
-    .catch((e) => { take.hqStatus = 'error'; log(`#${take.id} hq failed: ${e.message}`, 'err'); })
-    .finally(renderTakes);
+    .catch((e) => {
+      take.hqStatus = 'error';
+      log(`#${take.id} hq failed: ${e.message}`, 'err');
+      pill('hq', 'hq failed', 'bad');
+      banner(`HQ pass failed: ${e.message}`);
+      setTimeout(() => banner(''), 5000);
+    })
+    .finally(() => {
+      renderTakes();
+    });
 }
 
 // Finger tracking from the HQ worker: per hand, 21 wrist-relative keypoints per frame (GVHMR world axes).
@@ -439,6 +462,36 @@ function tick() {
     }
     const hud = $('#hud-src'); hud.textContent = src; hud.className = 'tag ' + (hq ? 'src-hq' : 'src-live');
     $('#hud-time').textContent = `#${current.id}  ${t.toFixed(2)}s`;
+
+    const hudHq = $('#hud-hq');
+    const vidBadge = $('#vid-badge');
+    if (current.hqStatus === 'running') {
+      const elapsed = ((performance.now() - (current.hqT0 || performance.now())) / 1000).toFixed(1);
+      if (hudHq) {
+        hudHq.style.display = 'block';
+        hudHq.className = 'tag hq-busy';
+        hudHq.innerHTML = `<span class="spin"></span> lifting hq motion · ${elapsed}s`;
+      }
+      if (vidBadge) {
+        vidBadge.style.display = 'flex';
+        vidBadge.className = 'vid-badge busy';
+        vidBadge.innerHTML = `<span class="spin"></span> Lifting 3D Motion (GPU) · ${elapsed}s`;
+      }
+    } else if (current.hq && (performance.now() - current.hqAt) < 6000) {
+      if (hudHq) {
+        hudHq.style.display = 'block';
+        hudHq.className = 'tag hq-done';
+        hudHq.textContent = `✓ hq motion active (${current.timings.hq?.toFixed(1) || ''}s)`;
+      }
+      if (vidBadge) {
+        vidBadge.style.display = 'flex';
+        vidBadge.className = 'vid-badge done';
+        vidBadge.innerHTML = `✓ HQ Motion Active`;
+      }
+    } else {
+      if (hudHq) hudHq.style.display = 'none';
+      if (vidBadge) vidBadge.style.display = 'none';
+    }
   }
   if (rig) {
     const shown = onStage ? cast[onStage].rig : rig;
@@ -502,9 +555,13 @@ async function handleVideoFile(f) {
     log(`upload failed (${err.message}) — playing the local copy; no hq pass for it`, 'err');
   }
   takes.push(take); renderTakes();
-  if (uploaded && settings.hq && hqOnline) runHQ(take);
   playTake(take);
-  banner('');
+  if (uploaded && settings.hq && hqOnline) {
+    banner(`Live preview active · Lifting high-quality 3D motion on GPU (GVHMR)…`);
+    runHQ(take);
+  } else {
+    banner('');
+  }
 }
 
 $('#btn-vid').onclick = () => $('#file-vid').click();
