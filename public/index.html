@@ -9,8 +9,7 @@
 {
   "imports": {
     "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
-    "@mediapipe/tasks-vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs"
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
   }
 }
 </script>
@@ -115,21 +114,20 @@
   #stage { position: absolute; inset: 0; }
   #stage canvas { display: block; }
   .vidwrap { position: absolute; top: 94px; left: 14px; width: min(38%, 520px); overflow: hidden; border: 1px solid var(--rule); background: #000; box-shadow: 0 12px 34px rgba(0,0,0,.5); }
-  .vidwrap video, .vidwrap canvas { display: block; width: 100%; }
-  .vidwrap canvas { position: absolute; inset: 0; height: 100%; pointer-events: none; }
+  .vidwrap video { display: block; width: 100%; }
   .vidwrap .empty { aspect-ratio: 16/9; display: grid; place-items: center; color: var(--ash); font: 11px var(--mono); }
   .vidwrap.portrait { width: auto; height: min(calc(100% - 120px), 640px); aspect-ratio: 9/16; }
   .vidwrap.portrait video { width: 100%; height: 100%; object-fit: contain; }
   .vidwrap.portrait .empty { aspect-ratio: auto; height: 100%; padding: 0 16px; text-align: center; }
   .hud { position: absolute; right: 14px; top: 14px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; pointer-events: none; }
   .hud .tag { font: 11px var(--mono); background: rgba(14,12,16,.82); padding: 5px 8px; clip-path: var(--notch); color: var(--ash); }
-  .hud .src-live { color: var(--missing); } .hud .src-hq { color: var(--gold); }
-  .hud .tag.hq-busy { color: var(--gold); background: rgba(37,33,42,.92); border-left: 2px solid var(--gold); }
-  .hud .tag.hq-done { color: var(--bone); background: rgba(28,45,32,.92); border-left: 2px solid #7cf29a; }
-  .vid-badge { position: absolute; top: 10px; left: 10px; z-index: 4; background: rgba(14,12,16,.88); backdrop-filter: blur(6px); border: 1px solid var(--rule); color: var(--gold); font: 11px/1.2 var(--mono); padding: 5px 9px; clip-path: var(--notch); display: none; align-items: center; gap: 7px; pointer-events: none; }
-  .vid-badge.busy { color: var(--gold); border-color: rgba(255,201,74,.5); animation: pulseBadge 1.5s ease-in-out infinite alternate; }
-  .vid-badge.done { color: var(--bone); border-color: rgba(124,242,154,.5); background: rgba(20,35,25,.9); }
-  @keyframes pulseBadge { 0% { border-color: rgba(255,201,74,.3); } 100% { border-color: rgba(255,201,74,.9); box-shadow: 0 0 10px rgba(255,201,74,.35); } }
+  .hud .src-hq { color: var(--gold); }
+  .hq-overlay { position: absolute; inset: 0; z-index: 5; background: rgba(14,12,16,.85); backdrop-filter: blur(6px); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 18px; text-align: center; }
+  .hq-ring { width: 38px; height: 38px; border: 3px solid rgba(255,201,74,.2); border-top: 3px solid var(--gold); border-right: 3px solid var(--missing); border-radius: 50%; animation: hqSpin .85s cubic-bezier(.6,.2,.4,.8) infinite; }
+  @keyframes hqSpin { to { transform: rotate(360deg); } }
+  .hq-title { font: 12px/1 var(--pixel); letter-spacing: 1px; color: var(--bone); }
+  .hq-desc { font: 11px/1.35 var(--sans); color: var(--ash); max-width: 240px; }
+  .hq-timer { font: 11.5px/1 var(--mono); color: var(--gold); background: var(--coal2); padding: 4px 8px; clip-path: var(--notch); border: 1px solid var(--rule); }
   .banner { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(14,12,16,.88); padding: 8px 14px; font: 11.5px var(--mono); clip-path: var(--notch); display: none; }
   .banner.on { display: block; }
 
@@ -158,23 +156,19 @@
     </div>
     <div class="pills">
       <span class="pill" id="pill-rig">character…</span>
-      <span class="pill" id="pill-pose">pose model…</span>
       <span class="pill" id="pill-hq">hq worker…</span>
     </div>
 
     <div class="section">
       <button class="go" id="btn-vid"><span>load clip<span style="color:var(--missing)">.</span></span><small>mp4 · webm · mov</small></button>
-      <span class="note">any local clip works — from a previous run, another generator, or your camera. it plays the live pose preview right away, then the hq pass lifts it onto the rig.</span>
+      <span class="note">any local clip works — from a previous run, another generator, or your camera. it extracts full-body 3d motion with the gvhmr neural network on your gpu.</span>
     </div>
 
     <div class="section">
       <label class="title">motion</label>
-      <label class="check"><input type="checkbox" id="hq" /><span>hq pass · gvhmr on your gpu<small>instant mediapipe preview, then the gvhmr motion swaps in</small></span></label>
-      <label class="check"><input type="checkbox" id="hands" /><span>track fingers<small>wilor on the source clip → wrist and finger poses. untracked hands rest in a natural curl</small></span></label>
+      <label class="check"><input type="checkbox" id="hq" checked /><span>hq 3d motion · gvhmr<small>deep 3d human mesh recovery on gpu with 60fps lag-free playback</small></span></label>
+      <label class="check"><input type="checkbox" id="hands" /><span>track fingers<small>wilor / mano on source clip → wrist & finger poses</small></span></label>
       <label class="check"><input type="checkbox" id="rootMotion" /><span>root motion</span></label>
-      <div class="row"><span>live pose model</span><select id="poseModel"><option value="heavy">heavy</option><option value="full">full</option></select></div>
-      <div class="row"><span>live smoothing</span><input type="range" id="smoothing" min="0" max="1" step="0.05" /></div>
-      <label class="check"><input type="checkbox" id="showSkel" /><span>skeleton overlay on video</span></label>
     </div>
 
     <div class="section">
@@ -208,7 +202,12 @@
     <div class="vidwrap" id="vidwrap">
       <div class="empty" id="vid-empty">loaded clip appears here</div>
       <video id="video" muted playsinline crossorigin="anonymous" style="display:none"></video>
-      <canvas id="overlay"></canvas>
+      <div class="hq-overlay" id="hq-overlay" style="display:none">
+        <div class="hq-ring"></div>
+        <div class="hq-title">GENERATING 3D MOTION</div>
+        <div class="hq-desc">GVHMR neural network extracting 3D motion on GPU…</div>
+        <div class="hq-timer" id="hq-timer">00:00</div>
+      </div>
       <div class="vid-badge" id="vid-badge"></div>
     </div>
     <div class="hud">

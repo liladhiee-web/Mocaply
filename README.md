@@ -1,8 +1,8 @@
 <h1 align="center">Mocaply</h1>
 
 <p align="center">
-  <b>Load any video clip. AI lifts the full 3D motion, fingers included, and any rigged 3D character performs it in real time.</b><br>
-  A video from your camera, phone, or internet feeds an instant in-browser MediaPipe preview and an optional GPU-accelerated GVHMR + WiLoR pass. Export directly to GLB for Blender or game engines.
+  <b>Load any video clip. AI extracts the full 3D motion, fingers included, and any rigged 3D character performs it in real time.</b><br>
+  A video from your camera, phone, or internet extracts high-precision 3D human motion via GPU-accelerated GVHMR + WiLoR. Enjoy lag-free 60 FPS in-browser rendering with zero CPU bottleneck. Export directly to GLB for Blender or game engines.
 </p>
 
 <p align="center">
@@ -17,20 +17,19 @@
 
 ```mermaid
 flowchart LR
-  C["Any Video Clip<br/>(mp4 · webm · mov)"] --> L["MediaPipe · Browser<br/>instant live preview"]
-  C --> H["GVHMR · GPU (Colab or Local)<br/>3D body trajectory & rotation"]
+  C["Any Video Clip<br/>(mp4 · webm · mov)"] --> H["GVHMR · GPU (Colab or Local)<br/>3D body trajectory & rotation"]
   C --> F["WiLoR · GPU<br/>wrist & finger tracking"]
-  L --> R[Mixamo Rig]
-  H -- cross-fade --> R
+  H --> R[Mixamo Rig]
   F --> R
+  R --> P["Lag-free 60 FPS 3D Playback"]
   R --> G[".glb Export · Blender render"]
 ```
 
 | Stage | Where | Time |
 |---|---|---|
-| **Live** preview: MediaPipe Pose, retargeted per frame | Browser (WebAssembly/WebGL) | Instant |
-| **HQ** motion: GVHMR → SMPL rotations → Mixamo rig | GPU worker (Free Google Colab or Local) | ~3.5–4s (per 5s clip) |
-| **Fingers**: WiLoR (with MediaPipe Hands fallback) | GPU worker | +~0.3s |
+| **HQ** 3D motion: GVHMR → SMPL rotations → Mixamo rig | GPU worker (Free Google Colab or Local) | ~3.5–4s (per 5s clip) |
+| **Fingers**: WiLoR / MANO hand tracking | GPU worker | +~0.3s |
+| **Playback**: Synchronized video + 3D rigged character | Browser (WebGL Three.js) | Lag-free 60 FPS (<0.1ms/frame) |
 
 ---
 

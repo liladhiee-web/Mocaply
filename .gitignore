@@ -36,3 +36,5 @@ bench/out/
 public/brand/fonts/*.ttf
 readme_preview.html
 public/_preview/
+tools/cloudflared*
+*.exe

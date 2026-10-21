@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Mocaply — load any clip, lift 3D motion with AI (MediaPipe & GVHMR), and retarget onto 3D rigs in real time",
+  "description": "Mocaply — load any clip, extract 3D motion with AI (GVHMR), and retarget onto 3D rigs in real time",
   "author": "liladhiee-web",
   "license": "Apache-2.0",
   "scripts": {
