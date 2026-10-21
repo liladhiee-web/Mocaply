@@ -107,9 +107,11 @@ node server.mjs               # → http://localhost:5177 (the live preview work
 
 Mocaply's code is licensed under the [Apache-2.0 License](LICENSE).
 
+Special thanks to [**blendi-remade/prompt2rig**](https://github.com/blendi-remade/prompt2rig) for the original project concept and foundational motion capture retargeting architecture that inspired Mocaply.
+
 This project integrates and builds upon foundational computer vision research:
 - [GVHMR](https://github.com/zju3dv/GVHMR) (ZJU3DV)
 - [SMPL-X](https://smpl-x.is.tue.mpg.de/) (Max Planck Institute for Intelligent Systems)
 - [WiLoR](https://github.com/rolpotamias/WiLoR)
 - [Motion2MixamoRig](https://github.com/MaxLiu22/Motion2MixamoRig)
-- [MediaPipe](https://ai.google.dev/edge/mediapipe) & [Three.js](https://threejs.org/)
+- [Three.js](https://threejs.org/)

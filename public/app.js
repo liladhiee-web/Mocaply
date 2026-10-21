@@ -40,8 +40,15 @@ function log(msg, cls = '') {
   const el = $('#log'); if (!el) return;
   const line = document.createElement('div');
   if (cls) line.className = cls;
-  line.textContent = `${new Date().toLocaleTimeString([], { hour12: false })}  ${msg}`;
-  el.appendChild(line); el.scrollTop = el.scrollHeight;
+  const ts = document.createElement('span');
+  ts.className = 'ts';
+  ts.textContent = new Date().toLocaleTimeString([], { hour12: false });
+  const text = document.createElement('span');
+  text.textContent = msg;
+  line.appendChild(ts);
+  line.appendChild(text);
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
 }
 function pill(id, text, state) {
   const p = $('#pill-' + id);
@@ -394,7 +401,7 @@ function tick() {
     const hud = $('#hud-src');
     if (hud) {
       hud.textContent = src;
-      hud.className = 'tag ' + (current.hq ? 'src-hq' : '');
+      hud.className = 'hud-tag ' + (current.hq ? 'src-hq' : '');
     }
     const hudTime = $('#hud-time');
     if (hudTime) {
@@ -406,25 +413,23 @@ function tick() {
     if (current.hqStatus === 'running') {
       const elapsed = ((performance.now() - (current.hqT0 || performance.now())) / 1000).toFixed(1);
       if (hudHq) {
-        hudHq.style.display = 'block';
-        hudHq.className = 'tag hq-busy';
-        hudHq.innerHTML = `<span class="spin"></span> generating 3d motion · ${elapsed}s`;
+        hudHq.style.display = 'flex';
+        hudHq.className = 'hud-tag hq-busy';
+        hudHq.innerHTML = `<span class="spin"></span> generating · ${elapsed}s`;
       }
       if (vidBadge) {
-        vidBadge.style.display = 'flex';
-        vidBadge.className = 'vid-badge busy';
-        vidBadge.innerHTML = `<span class="spin"></span> Generating 3D Motion (GPU) · ${elapsed}s`;
+        vidBadge.style.display = 'block';
+        vidBadge.innerHTML = `<span class="spin"></span> GPU ${elapsed}s`;
       }
     } else if (current.hq && (performance.now() - current.hqAt) < 6000) {
       if (hudHq) {
-        hudHq.style.display = 'block';
-        hudHq.className = 'tag hq-done';
-        hudHq.textContent = `✓ hq motion active (${current.timings.hq?.toFixed(1) || ''}s)`;
+        hudHq.style.display = 'flex';
+        hudHq.className = 'hud-tag hq-done';
+        hudHq.textContent = `✓ 3D Active (${current.timings.hq?.toFixed(1) || ''}s)`;
       }
       if (vidBadge) {
-        vidBadge.style.display = 'flex';
-        vidBadge.className = 'vid-badge done';
-        vidBadge.innerHTML = `✓ HQ Motion Active`;
+        vidBadge.style.display = 'block';
+        vidBadge.innerHTML = `✓ 3D Active`;
       }
     } else {
       if (hudHq) hudHq.style.display = 'none';
@@ -465,7 +470,9 @@ bindSetting('hq', 'checked');
 bindSetting('hands', 'checked', () => { if (rig) for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); });
 bindSetting('rootMotion', 'checked', () => { if (rig) for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); });
 
-$('#btn-char').onclick = () => $('#file-char').click();
+const triggerChar = () => $('#file-char')?.click();
+$('#btn-char')?.addEventListener('click', triggerChar);
+$('#btn-char-top')?.addEventListener('click', triggerChar);
 $('#file-char').onchange = (e) => {
   const f = e.target.files[0]; if (!f) return;
   const url = URL.createObjectURL(f);
@@ -512,7 +519,10 @@ async function handleVideoFile(f) {
   }
 }
 
-$('#btn-vid').onclick = () => $('#file-vid').click();
+const triggerVid = () => $('#file-vid')?.click();
+$('#btn-vid')?.addEventListener('click', triggerVid);
+$('#btn-vid-top')?.addEventListener('click', triggerVid);
+$('#dropzone')?.addEventListener('click', triggerVid);
 $('#file-vid').onchange = (e) => {
   const f = e.target.files[0]; e.target.value = ''; if (!f) return;
   handleVideoFile(f);
