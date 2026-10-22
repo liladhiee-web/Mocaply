@@ -11,6 +11,13 @@
   <a href="#license"><img alt="license: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-green?style=flat-square"></a>
 </p>
 
+<p align="center">
+  <video src="demo.mp4" controls="controls" width="100%" style="max-width: 800px; border-radius: 8px;">
+    <source src="demo.mp4" type="video/mp4">
+    Your browser does not support the video tag. Watch <a href="demo.mp4">demo.mp4</a> directly.
+  </video>
+</p>
+
 ---
 
 ## How It Works
