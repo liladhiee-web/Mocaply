@@ -31,6 +31,29 @@ flowchart LR
 | **Fingers**: WiLoR / MANO hand tracking | GPU worker | +~0.3s |
 | **Playback**: Synchronized video + 3D rigged character | Browser (WebGL Three.js) | Lag-free 60 FPS (<0.1ms/frame) |
 
+### Grounding
+
+GVHMR reconstructs motion in a world frame whose floor is not guaranteed to
+match `y = 0`. The pipeline now reconstructs that floor as well:
+
+1. `hq/worker.py` samples the lowest SMPL-X sole vertices across the clip and
+   `hq/ground.py` fits a plane with RANSAC (rejecting walls, outliers and
+   implausible tilts).
+2. The browser rotates the whole motion so the plane normal becomes up and the
+   plane sits on the stage floor (`public/grounding.js`).
+3. A per-frame contact solver keeps planted feet on the floor (never sinking,
+   never floating), preserves the flight arc of jumps, and removes horizontal
+   foot sliding by correcting only the hips/root.
+
+Bone rotations are never modified, so the recovered pose and motion stay
+intact. The **Ground Plane Lock** toggle in the Motion Pipeline panel enables or
+disables the correction.
+
+```bash
+npm test                 # grounding math (Node)
+python hq/test_ground.py # plane fitting (stdlib only)
+```
+
 ---
 
 ## Quick Start
@@ -80,6 +103,7 @@ node server.mjs               # → http://localhost:5177 (the live preview work
 - **Mixamo Rigging:** Built-in support for X Bot, Michelle, and Soldier, plus custom `.fbx` or `.glb` Mixamo character upload.
 - **Finger Articulation:** WiLoR MANO hands or MediaPipe Hands fallback captures realistic finger poses and hand gestures.
 - **Root Motion Recovery:** Automatic gravity-aware hip trajectory tracking preserves spatial movement.
+- **Ground Plane Reconstruction:** The floor is fitted from the recovered SMPL-X soles, gravity-aligned, and locked with per-frame foot contact so the character does not float, sink, or slide.
 - **GLB Export:** Download skinned characters with animated motion tracks ready for Blender, Unreal Engine, or Unity.
 
 ---

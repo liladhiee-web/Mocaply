@@ -156,6 +156,20 @@ export class Rig {
     return lo;
   }
 
+  /** Lowest sole point of one foot in world space, corrected for rest clearance. */
+  footSole(side, out = new V3()) {
+    let found = false;
+    for (const n of FOOT_POINTS) {
+      if (!n.startsWith(side)) continue;
+      const b = this.bones[n], c = this.footClearance[n];
+      if (!b || c == null) continue;
+      b.getWorldPosition(_v1);
+      const y = _v1.y - c;
+      if (!found || y < out.y) { out.set(_v1.x, y, _v1.z); found = true; }
+    }
+    return found ? out : null;
+  }
+
   /** Raise the hips so no foot goes below the floor. Returns the lift applied. */
   clampToFloor(extraLift = 0) {
     const lift = Math.max(0, this.floorY - this.lowestFoot()) + extraLift;

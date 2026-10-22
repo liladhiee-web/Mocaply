@@ -9,6 +9,7 @@ Run:  hq/.venv/Scripts/python hq/worker.py      (listens on 127.0.0.1:5178; setu
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import shutil
 import subprocess
@@ -257,6 +258,61 @@ def leg_length(params) -> float:
     return (seg(1, 4) + seg(4, 7) + seg(2, 5) + seg(5, 8)) / 2
 
 
+def ground_cloud(world, max_frames: int = 96, per_frame: int = 4, chunk: int = 16):
+    """Sample the lowest sole vertices of the recovered SMPL-X mesh.
+
+    Frames are subsampled (a plane does not need every frame) so the fitting
+    pass stays cheap next to GVHMR itself. Returns world-space points and the
+    number of frames that contributed.
+    """
+    if not _BODY or "transl" not in world:
+        return None, 0
+    import torch
+
+    keys = {k: v.cuda() for k, v in world.items() if hasattr(v, "cuda")}
+    n = int(keys["transl"].shape[0]) if "transl" in keys else 0
+    if n <= 0:
+        return None, 0
+    stride = max(1, math.ceil(n / max_frames))
+    indices = list(range(0, n, stride))[:max_frames]
+    points = []
+    for start in range(0, len(indices), chunk):
+        sel = indices[start:start + chunk]
+        params = {k: v[sel] for k, v in keys.items()}
+        with torch.no_grad():
+            verts = _BODY["smplx"](**params).vertices.detach().float().cpu().numpy()
+        for j in range(verts.shape[0]):
+            arr = verts[j]
+            lo = float(arr[:, 1].min())
+            cand = arr[arr[:, 1] <= lo + 0.015]  # sole / contact patch
+            if len(cand) > per_frame:
+                cand = cand[cand[:, 1].argsort()[:per_frame]]
+            points.extend([[float(p[0]), float(p[1]), float(p[2])] for p in cand])
+    return (points or None), len(indices)
+
+
+def ground_report(world):
+    """Reconstruct the ground plane the subject stood on; never fatal."""
+    try:
+        import ground as groundmod
+
+        pts, frames = ground_cloud(world)
+        if not pts:
+            return None
+        plane = groundmod.fit_ground_plane(pts)
+        if plane is None:
+            log("ground: no confident floor plane in the recovered soles")
+            return None
+        plane["method"] = "smplx-sole-ransac"
+        plane["sampled_frames"] = frames
+        log(f"ground: tilt {plane['tilt_deg']:.1f}°  inliers {plane['inlier_ratio']:.0%}  "
+            f"rms {plane['rms'] * 1000:.1f}mm  ({frames} frames)")
+        return plane
+    except Exception as e:  # noqa: BLE001 — grounding is an enhancement, not the motion pass
+        log(f"ground plane failed: {type(e).__name__}: {e}")
+        return None
+
+
 class ProcessIn(BaseModel):
     video_url: str
     hands: str | None = None  # "wilor" | "mediapipe" | "off" (default: HQ_HANDS / auto)
@@ -320,9 +376,12 @@ def process(body: ProcessIn):
         t_ll = time.perf_counter()
         ll = leg_length(world)
         t["leg_length"] = time.perf_counter() - t_ll
-        return result, t, world, ll, to_np(result.smpl_params_camera["global_orient"])
+        t_g = time.perf_counter()
+        ground = ground_report(world)
+        t["ground"] = time.perf_counter() - t_g
+        return result, t, world, ll, to_np(result.smpl_params_camera["global_orient"]), ground
 
-    result, t, world, ll, incam_go = GPU.submit(run).result()
+    result, t, world, ll, incam_go, ground = GPU.submit(run).result()
     incam_go0 = incam_go[0]
 
     go, bp, tr = to_np(world["global_orient"]), to_np(world["body_pose"]), to_np(world["transl"])
@@ -349,7 +408,8 @@ def process(body: ProcessIn):
     hand_note = (f"  hands[{method}] {t_hands:.2f}s R {hands_out['R']['coverage']:.0%} L {hands_out['L']['coverage']:.0%}"
                  if hands_out else "")
     log(f"{key}: {n} frames @ {fps:.1f}fps  download {t_dl:.2f}s  gvhmr {t['recover']:.2f}s  "
-        f"stabilize {t['stabilize']:.2f}s  legs {t['leg_length']:.2f}s{hand_note}  total {total:.2f}s")
+        f"stabilize {t['stabilize']:.2f}s  legs {t['leg_length']:.2f}s  "
+        f"ground {t.get('ground', 0):.2f}s{hand_note}  total {total:.2f}s")
     return {
         "n": n, "fps": fps, "leg_length": ll,
         "global_orient": go.reshape(-1).round(5).tolist(),
@@ -360,6 +420,8 @@ def process(body: ProcessIn):
         "incam_global_orient0": incam_go0.round(5).tolist(),
         # Finger tracking: per hand 21 wrist-relative keypoints/frame in world axes (see hq/hands.py).
         "hands": hands_out,
+        # Reconstructed floor in GVHMR world space: normal·p + d = 0 (see hq/ground.py).
+        "ground": ground,
         "elapsed": total, "timings": {"download": t_dl, **t},
     }
 

@@ -6,6 +6,7 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { createStage } from './stage.js';
 import { HAND_LIMITS, Rig, Track, trackToClip, blendSnapshots, smplGlobals, aaToQuat } from './retarget.js';
+import { planeAlignment, solveGrounding } from './grounding.js';
 
 const $ = (s) => document.querySelector(s);
 // Mixamo-rigged characters from three.js CDN
@@ -19,7 +20,7 @@ const CHARACTERS = {
 // ---- settings ------------------------------------------------------------------
 const DEFAULTS = {
   hq: true, rootMotion: true,
-  character: 'xbot', swap: false, cinematic: false, hands: true,
+  character: 'xbot', swap: false, cinematic: false, hands: true, ground: true,
 };
 const settings = (() => { try { return { ...DEFAULTS, ...JSON.parse(localStorage.getItem('p2r') || '{}') }; } catch { return { ...DEFAULTS }; } })();
 const save = () => { try { localStorage.setItem('p2r', JSON.stringify(settings)); } catch {} };
@@ -242,6 +243,11 @@ function runHQ(take) {
       take.hqStatus = 'done';
       take.timings.hq = (performance.now() - t0) / 1000;
       log(`#${take.id} hq motion generated in ${take.timings.hq.toFixed(1)}s (${r.n} frames, worker ${r.elapsed?.toFixed(1)}s)`, 'hq');
+      const g = take.hq?.ground;
+      if (g) {
+        const plane = g.plane ? `plane ${g.tilt.toFixed(1)}° (${Math.round(g.inliers * 100)}% inliers)` : 'horizontal';
+        log(`#${take.id} ground: ${plane}, contact ${Math.round(g.contact * 100)}%, foot-lock ${Math.round(g.locked * 100)}%`, 'hq');
+      }
       pill('hq', `hq · ${take.timings.hq.toFixed(1)}s ready`, 'ok');
       if (current === take) {
         showHqLoading(false);
@@ -279,11 +285,32 @@ function applyHandsFrame(hands, f, yawFix) {
   }
 }
 
-/** GVHMR SMPL params → Track of Mixamo local rotations + grounded hips path. */
-function bakeSmpl(r) {
+/** Validate the worker's reconstructed ground plane (GVHMR world space). */
+function planeOf(r) {
+  const g = r?.ground;
+  if (!g || !Array.isArray(g.normal) || g.normal.length !== 3) return null;
+  const n = g.normal.map(Number);
+  if (!n.every(Number.isFinite)) return null;
+  const len = Math.hypot(...n);
+  if (!(len > 1e-6)) return null;
+  const normal = n.map((v) => v / len);
+  const d = Number.isFinite(Number(g.d)) ? Number(g.d) : 0;
+  const tiltDeg = (Math.acos(Math.min(1, Math.abs(normal[1]))) * 180) / Math.PI;
+  // A wildly tilted or offset "floor" is almost certainly a bad fit; fall back
+  // to the horizontal contact solver instead of tipping the character over.
+  if (tiltDeg > 35 || Math.abs(d) > 2) return null;
+  return { normal, d, tiltDeg, inliers: Number(g.inlier_ratio) || 0 };
+}
+
+/** SMPL params → posed frames, plane alignment and per-frame foot soles. */
+function bakeTrack(r, plane) {
   const { n, fps, global_orient: GO, body_pose: BP, transl: T, leg_length } = r;
+  const align = plane ? planeAlignment(plane) : null;
+  const qPlane = align ? new THREE.Quaternion().fromArray(align.q) : null;
+
   // Heading: turn GVHMR's world so the character faces the viewer the way the person faces the camera.
   const fWorld = new THREE.Vector3(0, 0, 1).applyQuaternion(aaToQuat(GO[0], GO[1], GO[2]));
+  if (qPlane) fWorld.applyQuaternion(qPlane);
   let targetYaw = 0;
   if (r.incam_global_orient0) {
     const [a, b, c] = r.incam_global_orient0;
@@ -291,26 +318,65 @@ function bakeSmpl(r) {
     targetYaw = Math.atan2(fc.x, -fc.z);
   }
   const yawFix = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), targetYaw - Math.atan2(fWorld.x, fWorld.z));
+  // Align the reconstructed floor to +Y first, then apply the heading yaw.
+  const fix = qPlane ? yawFix.clone().multiply(qPlane) : yawFix;
+  const planeShift = align ? align.dy : 0;
+
   const scale = rig.legLength / (leg_length || 0.85);
   const track = new Track(rig.order.length);
-  const lows = [];
+  const left = [], right = [], lows = [];
   const d = new THREE.Vector3();
   for (let f = 0; f < n; f++) {
     rig.reset();
-    rig.applySmplGlobal(smplGlobals(GO.subarray ? GO.subarray(f * 3, f * 3 + 3) : GO.slice(f * 3, f * 3 + 3), BP.slice(f * 63, f * 63 + 63), yawFix));
+    rig.applySmplGlobal(smplGlobals(GO.subarray ? GO.subarray(f * 3, f * 3 + 3) : GO.slice(f * 3, f * 3 + 3), BP.slice(f * 63, f * 63 + 63), fix));
     if (settings.rootMotion) {
-      d.set(T[f * 3] - T[0], T[f * 3 + 1] - T[1], T[f * 3 + 2] - T[2]).applyQuaternion(yawFix).multiplyScalar(scale);
+      d.set(T[f * 3] - T[0], T[f * 3 + 1] - T[1], T[f * 3 + 2] - T[2]).applyQuaternion(fix).multiplyScalar(scale);
+      d.y += planeShift * scale;   // put the detected floor on the stage floor
       const p = rig.rest.Hips.wp.clone().add(d);
       rig.setHipsWorld(p);
     }
-    applyHandsFrame(r.hands, f, yawFix);
+    applyHandsFrame(r.hands, f, fix);
+    const L = rig.footSole('Left'), R = rig.footSole('Right');
+    left.push(L ? [L.x, L.y, L.z] : null);
+    right.push(R ? [R.x, R.y, R.z] : null);
     lows.push(rig.lowestFoot());
     track.push(f / fps, rig.snapshot());
   }
-  // Ground: the typical lowest foot sits on the floor; never sink below it.
+  return { track, left, right, lows };
+}
+
+/** Previous constant-offset behaviour, used when grounding is switched off. */
+function legacyGround(track, lows) {
+  if (!lows.length) return;
   const sorted = [...lows].sort((a, b) => a - b);
   const offset = rig.floorY - sorted[Math.floor(sorted.length * 0.08)];
   track.p.forEach((p, f) => { p[1] += offset + Math.max(0, rig.floorY - (lows[f] + offset)); });
+}
+
+/** GVHMR SMPL params → Track of Mixamo local rotations + grounded hips path. */
+function bakeSmpl(r) {
+  const plane = settings.ground ? planeOf(r) : null;
+  const pass = bakeTrack(r, plane);
+  const { track } = pass;
+
+  if (settings.ground && pass.left.length && pass.left.every(Boolean) && pass.right.every(Boolean)) {
+    const g = solveGrounding({
+      left: pass.left, right: pass.right, floorY: rig.floorY, fps: r.fps,
+      lock: settings.rootMotion,
+    });
+    for (let f = 0; f < track.p.length; f++) {
+      track.p[f][0] += g.dx[f];
+      track.p[f][1] += g.dy[f];
+      track.p[f][2] += g.dz[f];
+    }
+    track.ground = {
+      plane: !!plane, tilt: plane ? plane.tiltDeg : 0,
+      bias: g.bias, contact: g.contactRatio, locked: g.locked,
+      inliers: plane ? plane.inliers : 0,
+    };
+  } else {
+    legacyGround(track, pass.lows);
+  }
   rig.reset();
   return track;
 }
@@ -469,6 +535,7 @@ bindSetting('character', 'value', (c) => { if (rig && CHARACTERS[c]) loadCharact
 bindSetting('hq', 'checked');
 bindSetting('hands', 'checked', () => { if (rig) for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); });
 bindSetting('rootMotion', 'checked', () => { if (rig) for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); });
+bindSetting('ground', 'checked', () => { if (rig) for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); });
 
 const triggerChar = () => $('#file-char')?.click();
 $('#btn-char')?.addEventListener('click', triggerChar);
@@ -581,7 +648,7 @@ function applyCaptureZoom(k, bone, t = 0) {
 // Debug handle for console
 window.p2r = {
   get current() { return current; }, get rig() { return rig; }, takes, video,
-  stage, HAND_LIMITS, rebake() { for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); },
+  stage, HAND_LIMITS, bake: bakeSmpl, rebake() { for (const t of takes) if (t.hqRaw) t.hq = bakeSmpl(t.hqRaw); },
   focusBone(name, d = 0.6, dir = [0.15, 0.1, 1]) {
     const r = onStage ? cast[onStage].rig : rig;
     const p = r.bones[name].getWorldPosition(new THREE.Vector3());
@@ -589,7 +656,7 @@ window.p2r = {
     stage.camera.position.copy(p).add(new THREE.Vector3(...dir).normalize().multiplyScalar(d));
     stage.setFocusLock?.(p);
   },
-  take(id) { const t = takes.find((x) => x.id === id); return t && { id: t.id, status: t.status, hq: t.hqStatus, url: t.videoUrl, duration: t.hq?.duration ?? null }; },
+  take(id) { const t = takes.find((x) => x.id === id); return t && { id: t.id, status: t.status, hq: t.hqStatus, url: t.videoUrl, duration: t.hq?.duration ?? null, ground: t.hq?.ground ?? null }; },
   async beginCapture(id) {
     const t = takes.find((x) => x.id === id);
     if (!t?.hq) throw new Error('take has no HQ motion');
